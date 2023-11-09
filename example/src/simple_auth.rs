@@ -1,4 +1,4 @@
-use git_server::server::authenticator::Authenticator;
+use git_server::authenticator::Authenticator;
 
 use russh_keys::key::PublicKey;
 

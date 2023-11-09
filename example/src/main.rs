@@ -1,4 +1,4 @@
-use git_server::server::{git_server::GitServer, git_server_config::GitServerConfig};
+use git_server::{GitServer, GitServerConfig};
 use log::debug;
 use simple_auth::SimpleAuth;
 

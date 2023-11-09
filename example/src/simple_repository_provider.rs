@@ -1,6 +1,6 @@
 use std::env;
 
-use git_server::repository::repository_provider::RepositoryProvider;
+use git_server::repository::RepositoryProvider;
 use log::debug;
 
 use crate::simple_repository::SimpleRepository;

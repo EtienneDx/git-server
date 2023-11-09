@@ -10,12 +10,10 @@ use russh_keys::key::PublicKey;
 use tokio::{io::AsyncWriteExt, process::ChildStdin};
 
 use crate::{
+  authenticator::Authenticator,
   error::{GitError, GitProcessError},
-  repository::repository_provider::RepositoryProvider,
-};
-
-use super::{
-  authenticator::Authenticator, git_process::GitProcess, git_server_config::GitServerConfig,
+  git_server_config::GitServerConfig,
+  repository::RepositoryProvider, server::git_process::start_process,
 };
 
 pub struct RequestHandler<A, R, U>
@@ -110,8 +108,7 @@ where
     let handle = session.handle();
 
     if let Ok(data_str) = std::str::from_utf8(data) {
-      // TODO: refactor the start_proccess
-      match GitProcess::start_process(
+      match start_process(
         data_str,
         handle.clone(),
         channel_id,

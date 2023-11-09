@@ -1,4 +1,6 @@
-pub mod repository_provider;
+mod repository_provider;
+
+pub use repository_provider::*;
 
 /// Enum representing the different permissions that can be granted to a user for a repository.
 #[derive(Debug)]

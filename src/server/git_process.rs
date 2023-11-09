@@ -1,4 +1,3 @@
-// TODO: Refactor this file. There is no point in having a GitProcess struct.
 use std::process::Stdio;
 
 use log::{debug, error};
@@ -9,74 +8,74 @@ use tokio::process::{Child, ChildStdin, Command};
 
 use crate::error::GitProcessError;
 use crate::repository::{
-  repository_provider::RepositoryProvider, Repository, RepositoryPermission,
+  RepositoryProvider, Repository, RepositoryPermission,
 };
 
-use super::git_server_config::GitServerConfig;
+use crate::git_server_config::GitServerConfig;
 
 const GIT_UPLOAD_PACK: &str = "git-upload-pack";
 const GIT_RECEIVE_PACK: &str = "git-receive-pack";
 const ALLOWED_COMMANDS: [&str; 2] = [GIT_UPLOAD_PACK, GIT_RECEIVE_PACK];
 
+/// Starts a new git process.
+pub(crate) async fn start_process<U, R: RepositoryProvider<User = U>>(
+  command: &str,
+  handle: Handle,
+  channel_id: ChannelId,
+  user: &U,
+  repo_provider: &R,
+  config: &GitServerConfig,
+) -> Result<ChildStdin, GitProcessError> {
+  let (command, repo_path) = parse_command(command)?;
+  if !is_command_allowed(command) {
+    return Err(GitProcessError::InvalidCommandError);
+  }
+
+  let repository = repo_provider
+    .find_repository(user, repo_path)
+    .ok_or(GitProcessError::RepositoryNotFoundError)?;
+  let permission = get_permission(command)?;
+
+  if !repository.has_permission(user, permission) {
+    return Err(GitProcessError::PermissionDeniedError);
+  }
+
+  let mut process = if config.use_git_command {
+    let mut cmd = Command::new("git");
+    cmd.arg(&command[4..]);
+    cmd
+  } else {
+    Command::new(command)
+  };
+
+  debug!("Starting process: {}", command);
+
+  let mut process = process
+    .arg(repository.get_path())
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .spawn()?;
+
+  let stdin = process.stdin.take().unwrap();
+  let git_process = GitProcess {
+    process,
+    handle,
+    channel_id,
+  };
+
+  git_process.forward_output();
+
+  Ok(stdin)
+}
+
 /// A struct representing a git process.
-pub struct GitProcess {
+struct GitProcess {
   process: Child,
   handle: Handle,
   channel_id: ChannelId,
 }
 
 impl GitProcess {
-  /// Starts a new git process.
-  pub(crate) async fn start_process<U, R: RepositoryProvider<User = U>>(
-    command: &str,
-    handle: Handle,
-    channel_id: ChannelId,
-    user: &U,
-    repo_provider: &R,
-    config: &GitServerConfig,
-  ) -> Result<ChildStdin, GitProcessError> {
-    let (command, repo_path) = parse_command(command)?;
-    if !is_command_allowed(command) {
-      return Err(GitProcessError::InvalidCommandError);
-    }
-
-    let repository = repo_provider
-      .find_repository(user, repo_path)
-      .ok_or(GitProcessError::RepositoryNotFoundError)?;
-    let permission = get_permission(command)?;
-
-    if !repository.has_permission(user, permission) {
-      return Err(GitProcessError::PermissionDeniedError);
-    }
-
-    let mut process = if config.use_git_command {
-      let mut cmd = Command::new("git");
-      cmd.arg(&command[4..]);
-      cmd
-    } else {
-      Command::new(command)
-    };
-
-    debug!("Starting process: {}", command);
-
-    let mut process = process
-      .arg(repository.get_path())
-      .stdin(Stdio::piped())
-      .stdout(Stdio::piped())
-      .spawn()?;
-
-    let stdin = process.stdin.take().unwrap();
-    let git_process = GitProcess {
-      process,
-      handle,
-      channel_id,
-    };
-
-    git_process.forward_output();
-
-    Ok(stdin)
-  }
-
   /// Forwards the output of the git process to the client.
   fn forward_output(mut self) {
     let mut git_stdout = self.process.stdout.take().unwrap();
@@ -110,10 +109,7 @@ impl GitProcess {
       Ok::<(), ()>(())
     });
   }
-}
-
-/// Methods for sending data to the client
-impl GitProcess {
+  
   /// Closes the channel.
   async fn close(&self) -> Result<(), ()> {
     self.handle.close(self.channel_id).await.map_err(|_| {

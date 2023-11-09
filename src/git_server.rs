@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use russh::server::{Config, Server};
 
-use crate::{error::GitError, repository::repository_provider::RepositoryProvider};
-
-use super::{
-  authenticator::Authenticator, git_server_config::GitServerConfig, request_handler::RequestHandler,
+use crate::{
+  authenticator::Authenticator, error::GitError, git_server_config::GitServerConfig,
+  repository::RepositoryProvider,
 };
+
+use crate::server::request_handler::RequestHandler;
 
 pub struct GitServer<A, R, U>
 where
