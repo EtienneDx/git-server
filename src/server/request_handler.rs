@@ -61,6 +61,7 @@ where
 {
   type Error = GitError;
 
+  /// Authenticates the user based on their public key.
   async fn auth_publickey(
     mut self,
     user: &str,
@@ -83,6 +84,7 @@ where
     }
   }
 
+  /// Opens a new session. Required for russh to accept the ssh connection.
   async fn channel_open_session(
     mut self,
     _channel: Channel<Msg>,
@@ -91,6 +93,9 @@ where
     Ok((self, true, session))
   }
 
+  /// Executes a ssh command. This is where the git command is received.
+  ///
+  /// Should any new commands become supported, they should be added here.
   async fn exec_request(
     mut self,
     channel_id: ChannelId,
@@ -105,7 +110,8 @@ where
     let handle = session.handle();
 
     if let Ok(data_str) = std::str::from_utf8(data) {
-      let process = GitProcess::start_process(
+      // TODO: refactor the start_proccess
+      match GitProcess::start_process(
         data_str,
         handle.clone(),
         channel_id,
@@ -113,8 +119,8 @@ where
         self.repository_provider.as_ref(),
         &self.config,
       )
-      .await;
-      match process {
+      .await
+      {
         Err(e) => {
           debug!("Error starting git process: {:?}", e);
           send_error(&handle, channel_id, e.message()).await;
@@ -134,9 +140,11 @@ where
       .await;
       handle.close(channel_id).await.unwrap();
     }
+
     Ok((self, session))
   }
 
+  /// Receives data from the client and forwards it to the git process.
   async fn data(
     mut self,
     channel_id: ChannelId,
@@ -152,6 +160,7 @@ where
     Ok((self, session))
   }
 
+  /// Receives an EOF from the client and stops the git process.
   async fn channel_eof(
     mut self,
     channel_id: ChannelId,
@@ -166,6 +175,7 @@ where
   }
 }
 
+/// Util function to send an error message to the client.
 async fn send_error(handle: &Handle, channel_id: ChannelId, message: &str) {
   let message = CryptoVec::from_slice(message.as_bytes());
   if handle.extended_data(channel_id, 1, message).await.is_err() {

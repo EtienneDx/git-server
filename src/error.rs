@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+/// Errors that can occur in the git server.
 #[derive(Error, Debug)]
 pub enum GitError {
   #[error("Unknown error occurred")]
@@ -22,6 +23,7 @@ pub enum GitError {
   IoError(#[from] std::io::Error),
 }
 
+/// Errors that can occur during the git process.
 #[derive(Error, Debug)]
 pub enum GitProcessError {
   #[error("Invalid command error")]
@@ -35,6 +37,7 @@ pub enum GitProcessError {
 }
 
 impl GitProcessError {
+  /// User friendly message for the error. These are sent to the client.
   pub fn message(&self) -> &str {
     match self {
       GitProcessError::InvalidCommandError => "Invalid command",

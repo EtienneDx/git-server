@@ -1,3 +1,4 @@
+// TODO: Refactor this file. There is no point in having a GitProcess struct.
 use std::process::Stdio;
 
 use log::{debug, error};
@@ -17,6 +18,7 @@ const GIT_UPLOAD_PACK: &str = "git-upload-pack";
 const GIT_RECEIVE_PACK: &str = "git-receive-pack";
 const ALLOWED_COMMANDS: [&str; 2] = [GIT_UPLOAD_PACK, GIT_RECEIVE_PACK];
 
+/// A struct representing a git process.
 pub struct GitProcess {
   process: Child,
   handle: Handle,
@@ -24,7 +26,8 @@ pub struct GitProcess {
 }
 
 impl GitProcess {
-  pub async fn start_process<U, R: RepositoryProvider<User = U>>(
+  /// Starts a new git process.
+  pub(crate) async fn start_process<U, R: RepositoryProvider<User = U>>(
     command: &str,
     handle: Handle,
     channel_id: ChannelId,
@@ -38,7 +41,7 @@ impl GitProcess {
     }
 
     let repository = repo_provider
-      .find_repository(repo_path)
+      .find_repository(user, repo_path)
       .ok_or(GitProcessError::RepositoryNotFoundError)?;
     let permission = get_permission(command)?;
 
@@ -74,6 +77,7 @@ impl GitProcess {
     Ok(stdin)
   }
 
+  /// Forwards the output of the git process to the client.
   fn forward_output(mut self) {
     let mut git_stdout = self.process.stdout.take().unwrap();
 
@@ -110,12 +114,14 @@ impl GitProcess {
 
 /// Methods for sending data to the client
 impl GitProcess {
+  /// Closes the channel.
   async fn close(&self) -> Result<(), ()> {
     self.handle.close(self.channel_id).await.map_err(|_| {
       error!("Failed to close handle");
     })?;
     Ok(())
   }
+  /// Sends data to the client.
   async fn data(&self, data: &[u8]) -> Result<(), ()> {
     let buf: russh::CryptoVec = CryptoVec::from_slice(data);
     self.handle.data(self.channel_id, buf).await.map_err(|_| {
@@ -123,6 +129,7 @@ impl GitProcess {
     })?;
     Ok(())
   }
+  /// Sets the exit status of the process.
   async fn exit_status(&self, status: u32) -> Result<(), ()> {
     self
       .handle
@@ -133,6 +140,7 @@ impl GitProcess {
       })?;
     Ok(())
   }
+  /// Sends an EOF to the client.
   async fn eof(&self) -> Result<(), ()> {
     self.handle.eof(self.channel_id).await.map_err(|_| {
       error!("Failed to send EOF");
@@ -141,6 +149,7 @@ impl GitProcess {
   }
 }
 
+/// What kind of permission is required for the given command.
 fn get_permission(command: &str) -> Result<RepositoryPermission, GitProcessError> {
   match command {
     GIT_UPLOAD_PACK => Ok(RepositoryPermission::Read),
@@ -149,6 +158,7 @@ fn get_permission(command: &str) -> Result<RepositoryPermission, GitProcessError
   }
 }
 
+/// Tries to parse the command and the repository path from the given string.
 fn parse_command(command: &str) -> Result<(&str, &str), GitProcessError> {
   let mut parts = command.splitn(2, ' ');
   let command = parts.next().ok_or(GitProcessError::InvalidCommandError)?;

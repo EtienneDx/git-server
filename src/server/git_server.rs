@@ -19,12 +19,24 @@ where
   config: GitServerConfig,
 }
 
+/// A Git server implementation that uses an authenticator and repository provider.
+///
+/// `A` is the authenticator type that provides user authentication.
+/// `R` is the repository provider type that provides access to Git repositories.
+/// `U` is the user type that is returned by the authenticator and used by the repositories to check permissions.
 impl<A, R, U> GitServer<A, R, U>
 where
   A: Authenticator<User = U>,
   R: RepositoryProvider<User = U>,
   U: Sync + Send + 'static,
 {
+  /// Creates a new `GitServer`, using the given `Authenticator`, `RepositoryProvider` and configuration.
+  ///
+  /// - The `Authenticator` is used to authenticate users based on their public key.
+  /// - The `RepositoryProvider` is used to provide repositories based on the user and the path requested.
+  /// - The `GitServerConfig` is used to configure the server.
+  ///
+  /// The generic arguments are deduced from the arguments passed to this function.
   pub fn new(authenticator: A, repository_provider: R, config: GitServerConfig) -> Self {
     GitServer {
       authenticator: Arc::new(authenticator),
@@ -33,6 +45,7 @@ where
     }
   }
 
+  /// Starts listening for connections on the given port.
   pub async fn listen(self, port: u16) -> Result<(), GitError> {
     let config = Config {
       inactivity_timeout: Some(std::time::Duration::from_secs(30)),
