@@ -1,0 +1,167 @@
+use std::process::Stdio;
+
+use log::{debug, error};
+use russh::server::Handle;
+use russh::{ChannelId, CryptoVec};
+use tokio::io::AsyncReadExt;
+use tokio::process::{Child, ChildStdin, Command};
+
+use crate::error::GitProcessError;
+use crate::repository::{
+  repository_provider::RepositoryProvider, Repository, RepositoryPermission,
+};
+
+use super::git_server_config::GitServerConfig;
+
+const GIT_UPLOAD_PACK: &str = "git-upload-pack";
+const GIT_RECEIVE_PACK: &str = "git-receive-pack";
+const ALLOWED_COMMANDS: [&str; 2] = [GIT_UPLOAD_PACK, GIT_RECEIVE_PACK];
+
+pub struct GitProcess {
+  process: Child,
+  handle: Handle,
+  channel_id: ChannelId,
+}
+
+impl GitProcess {
+  pub async fn start_process<U, R: RepositoryProvider<User = U>>(
+    command: &str,
+    handle: Handle,
+    channel_id: ChannelId,
+    user: &U,
+    repo_provider: &R,
+    config: &GitServerConfig,
+  ) -> Result<ChildStdin, GitProcessError> {
+    let (command, repo_path) = parse_command(command)?;
+    if !is_command_allowed(command) {
+      return Err(GitProcessError::InvalidCommandError);
+    }
+
+    let repository = repo_provider
+      .find_repository(repo_path)
+      .ok_or(GitProcessError::RepositoryNotFoundError)?;
+    let permission = get_permission(command)?;
+
+    if !repository.has_permission(user, permission) {
+      return Err(GitProcessError::PermissionDeniedError);
+    }
+
+    let mut process = if config.use_git_command {
+      let mut cmd = Command::new("git");
+      cmd.arg(&command[4..]);
+      cmd
+    } else {
+      Command::new(command)
+    };
+
+    debug!("Starting process: {}", command);
+
+    let mut process = process
+      .arg(repository.get_path())
+      .stdin(Stdio::piped())
+      .stdout(Stdio::piped())
+      .spawn()?;
+
+    let stdin = process.stdin.take().unwrap();
+    let git_process = GitProcess {
+      process,
+      handle,
+      channel_id,
+    };
+
+    git_process.forward_output();
+
+    Ok(stdin)
+  }
+
+  fn forward_output(mut self) {
+    let mut git_stdout = self.process.stdout.take().unwrap();
+
+    tokio::spawn(async move {
+      const BUF_SIZE: usize = 1024 * 32;
+      let mut buf = [0u8; BUF_SIZE];
+      loop {
+        let read = git_stdout.read(&mut buf).await.map_err(|e| {
+          error!("Error reading from git process: {}", e);
+        })?;
+        if read == 0 {
+          break;
+        }
+        self.data(&buf[..read]).await?;
+      }
+
+      let status = self
+        .process
+        .wait()
+        .await
+        .map_err(|e| {
+          error!("Error waiting for git process: {}", e);
+        })?
+        .code()
+        .unwrap_or(128) as u32;
+      self.exit_status(status).await?;
+
+      self.eof().await?;
+      self.close().await?;
+      Ok::<(), ()>(())
+    });
+  }
+}
+
+/// Methods for sending data to the client
+impl GitProcess {
+  async fn close(&self) -> Result<(), ()> {
+    self.handle.close(self.channel_id).await.map_err(|_| {
+      error!("Failed to close handle");
+    })?;
+    Ok(())
+  }
+  async fn data(&self, data: &[u8]) -> Result<(), ()> {
+    let buf: russh::CryptoVec = CryptoVec::from_slice(data);
+    self.handle.data(self.channel_id, buf).await.map_err(|_| {
+      error!("Failed to write data to channel");
+    })?;
+    Ok(())
+  }
+  async fn exit_status(&self, status: u32) -> Result<(), ()> {
+    self
+      .handle
+      .exit_status_request(self.channel_id, status)
+      .await
+      .map_err(|_| {
+        error!("Failed to set exit status");
+      })?;
+    Ok(())
+  }
+  async fn eof(&self) -> Result<(), ()> {
+    self.handle.eof(self.channel_id).await.map_err(|_| {
+      error!("Failed to send EOF");
+    })?;
+    Ok(())
+  }
+}
+
+fn get_permission(command: &str) -> Result<RepositoryPermission, GitProcessError> {
+  match command {
+    GIT_UPLOAD_PACK => Ok(RepositoryPermission::Read),
+    GIT_RECEIVE_PACK => Ok(RepositoryPermission::Write),
+    _ => Err(GitProcessError::InvalidCommandError),
+  }
+}
+
+fn parse_command(command: &str) -> Result<(&str, &str), GitProcessError> {
+  let mut parts = command.splitn(2, ' ');
+  let command = parts.next().ok_or(GitProcessError::InvalidCommandError)?;
+  let repo_path = parts.next().ok_or(GitProcessError::InvalidCommandError)?;
+
+  if parts.next().is_some() {
+    return Err(GitProcessError::InvalidCommandError);
+  }
+
+  let repo_path = repo_path.trim_matches(|c| c == '\'' || c == '"');
+  Ok((command, repo_path))
+}
+
+fn is_command_allowed(command: &str) -> bool {
+  ALLOWED_COMMANDS.contains(&command)
+}

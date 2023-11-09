@@ -1,0 +1,46 @@
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum GitError {
+  #[error("Unknown error occurred")]
+  Unknown,
+  #[error("Invalid key")]
+  InvalidKey,
+  #[error("Already authenticated")]
+  AlreadyAuthenticated,
+  #[error("Not authenticated")]
+  NotAuthenticated,
+  #[error("Process not started")]
+  ProcessNotStartedError,
+  #[error("Process already started forwarding data")]
+  ForwardingAlreadyStartedError,
+  #[error("Channel not found")]
+  ChannelNotFoundError,
+  #[error("Ssh error: {0}")]
+  SshError(#[from] russh::Error),
+  #[error("IO error: {0}")]
+  IoError(#[from] std::io::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum GitProcessError {
+  #[error("Invalid command error")]
+  InvalidCommandError,
+  #[error("Repository not found error")]
+  RepositoryNotFoundError,
+  #[error("Permission denied error")]
+  PermissionDeniedError,
+  #[error("IO error: {0}")]
+  IoError(#[from] std::io::Error),
+}
+
+impl GitProcessError {
+  pub fn message(&self) -> &str {
+    match self {
+      GitProcessError::InvalidCommandError => "Invalid command",
+      GitProcessError::RepositoryNotFoundError => "Repository not found",
+      GitProcessError::PermissionDeniedError => "Permission denied",
+      GitProcessError::IoError(_) => "IO error",
+    }
+  }
+}
